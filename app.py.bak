@@ -1,0 +1,99 @@
+from flask import Flask, render_template, request
+import numpy as np
+import pandas as pd
+import nltk
+import re
+from nltk.tokenize import word_tokenize
+from collections import Counter
+from nltk.corpus import stopwords
+import string
+import math
+from collections import Counter
+from nltk import cluster
+from scipy import spatial
+import ast
+
+app = Flask(__name__)  # initializing Flask app
+
+
+def get_all_profiles():
+    profile_df = pd.read_csv("resume_list.csv")
+    return profile_df
+
+def get_all_skills():
+    skill_set = []
+    skill_data = pd.read_csv('skills.csv')
+    for i,r in skill_data.iterrows():
+        skill_set.append(r['Skill'])
+
+    return skill_set
+
+def get_job_skills(job_description, skill_set):
+    skill_results = []
+    stop_words = set(stopwords.words('english'))
+    tokens = word_tokenize(job_description)
+    f_tokens = [w for w in tokens if w not in stop_words]
+    f_tokens = [w for w in tokens if w.isalpha()]
+    ngram_match = list(map(' '.join, nltk.everygrams(f_tokens, 2, 3)))
+
+    for token in f_tokens:
+        if token.lower() in skill_set:
+            skill_results.append(token)
+
+    for ng in ngram_match:
+        if ng.lower() in skill_set:
+            skill_results.append(ng)
+
+    return skill_results
+        
+def recommendation_vectors(jd, dataframe):
+    final_list = []
+    counter1 = Counter(jd)
+    for index, row in dataframe.iterrows():
+        prof_skills = ast.literal_eval(row['Skills'])
+        if(len(prof_skills) > 0):
+            counter2 = Counter(prof_skills)
+
+            all_items = set(counter1.keys()).union( set(counter2.keys()) )
+                
+            vector1 = [counter1[k] for k in all_items]
+            vector2 = [counter2[k] for k in all_items]
+
+            similarity = 1 - spatial.distance.cosine(vector1, vector2)
+            if(similarity > 0):
+                #similarity = cluster.util.cosine_distance(vector1,vector2)
+                new_dict = [row['Name'].lower(), row['Profile Link'], similarity]
+                final_list.append(new_dict)
+    return final_list
+
+@app.route("/",methods=['GET'])
+def index():
+    return render_template('index.html')
+
+@app.route("/result", methods=['POST'])
+def result():
+    if request.method == 'POST':
+        job_decsription = request.form['job_decsription']
+
+        all_user_profiles = get_all_profiles()
+        all_skills = get_all_skills()
+        jd_skills = get_job_skills(job_decsription, all_skills)
+        jd_match = recommendation_vectors(jd_skills, all_user_profiles)
+
+        recommendation_df = sorted(jd_match, key=lambda x: x[2], reverse=True)
+        filtered_profiles = pd.DataFrame(recommendation_df, columns=['Name', 'profile_link', 'similarity'])
+        relevent_profiles = filtered_profiles.head(10)
+        
+        html = "<table class='my_records'><tr><th>Name</th><th>profile_link</th><th>similarity</th></tr>"
+        for i, r in relevent_profiles.iterrows():
+            html += "<tr><td>"+str.title(r['Name'])+"</td>"
+            html += "<td><a href='"+r['profile_link']+"'>"+r['profile_link']+"</a></td>"
+            html += "<td>"+str(r['similarity'])+"</td></tr>"
+        
+        return render_template('index.html', flask_response=html)
+    else:
+        return render_template('index.html')
+
+
+if __name__ == "__main__":
+    app.run(debug=True)
